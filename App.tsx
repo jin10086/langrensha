@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Users, NotebookPen, Settings, Download, FlaskConical, ShieldAlert, ChevronRight, Plus, Minus, Play, RotateCcw, Flag, Sparkles, Bot, X } from 'lucide-react';
+import { Users, NotebookPen, Settings, Download, FlaskConical, ShieldAlert, ChevronRight, Plus, Minus, Play, RotateCcw, Flag, Sparkles, Bot, X, AlertTriangle } from 'lucide-react';
 import PlayerGrid from './components/PlayerGrid';
 import GameLogView from './components/NotesView';
 import AIChat from './components/AIChat';
@@ -11,6 +11,7 @@ const STORAGE_KEY_PLAYERS = 'wolfpack_players';
 const STORAGE_KEY_META = 'wolfpack_meta';
 const STORAGE_KEY_LOGS = 'wolfpack_logs';
 const STORAGE_KEY_AI_CONFIG = 'wolfpack_ai_config';
+const STORAGE_KEY_SETUP_CONFIG = 'wolfpack_setup_config';
 
 // Default Role Config (Standard 12 players)
 const DEFAULT_ROLES: Record<string, number> = {
@@ -42,23 +43,48 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>(Tab.BOARD);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showAISettings, setShowAISettings] = useState(false);
+  const [showEndGameModal, setShowEndGameModal] = useState(false);
   
+  // Load initial setup config
+  const getSavedSetup = () => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_SETUP_CONFIG);
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  };
+  const savedSetup = getSavedSetup();
+
   // Game State
   const [players, setPlayers] = useState<Player[]>([]);
   const [gameEvents, setGameEvents] = useState<GameEvent[]>([]);
-  const [myId, setMyId] = useState<number>(1);
-  const [myRole, setMyRole] = useState<RoleType>(RoleType.VILLAGER);
+  const [myId, setMyId] = useState<number>(savedSetup?.myId || 1);
+  const [myRole, setMyRole] = useState<RoleType>(savedSetup?.myRole || RoleType.VILLAGER);
   const [isSetupMode, setIsSetupMode] = useState(true);
   
   // Setup State
-  const [roleCounts, setRoleCounts] = useState<Record<string, number>>(DEFAULT_ROLES);
+  const [roleCounts, setRoleCounts] = useState<Record<string, number>>(savedSetup?.roleCounts || DEFAULT_ROLES);
   
-  // AI Config State
-  const [aiConfig, setAiConfig] = useState<AIConfig>({
-    provider: 'deepseek',
-    apiKey: '',
-    baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-chat'
+  // AI Config State (Lazy initialization from LocalStorage)
+  const [aiConfig, setAiConfig] = useState<AIConfig>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_AI_CONFIG);
+      return saved ? JSON.parse(saved) : {
+        provider: 'deepseek',
+        apiKey: '',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-chat'
+      };
+    } catch (e) {
+      console.error("Error loading AI config", e);
+      return {
+        provider: 'deepseek',
+        apiKey: '',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-chat'
+      };
+    }
   });
 
   const [gameState, setGameState] = useState<GameState>({
@@ -73,12 +99,11 @@ const App: React.FC = () => {
   // Derived state for Setup
   const totalPlayers = Object.values(roleCounts).reduce((a, b) => a + b, 0);
 
-  // 1. Load Data
+  // 1. Load Data (Game Progress)
   useEffect(() => {
     const savedPlayers = localStorage.getItem(STORAGE_KEY_PLAYERS);
     const savedMeta = localStorage.getItem(STORAGE_KEY_META);
     const savedLogs = localStorage.getItem(STORAGE_KEY_LOGS);
-    const savedAiConfig = localStorage.getItem(STORAGE_KEY_AI_CONFIG);
 
     if (savedPlayers && savedMeta) {
       try {
@@ -86,27 +111,29 @@ const App: React.FC = () => {
         setPlayers(JSON.parse(savedPlayers));
         setMyId(meta.myId);
         setMyRole(meta.myRole);
-        setGameState(meta.gameState || { 
+        
+        const loadedGameState = meta.gameState || { 
           currentDay: 1, 
           witchAntidoteUsed: false, 
           witchPoisonUsed: false, 
           roleCounts: DEFAULT_ROLES 
-        });
+        };
+        setGameState(loadedGameState);
+        
+        // Sync roleCounts state with the loaded game so setup matches if we restart
+        if (loadedGameState.roleCounts) {
+            setRoleCounts(loadedGameState.roleCounts);
+        }
+
         if (savedLogs) setGameEvents(JSON.parse(savedLogs));
         setIsSetupMode(false);
       } catch (e) {
         console.error("Error loading save", e);
       }
     }
-
-    if (savedAiConfig) {
-       try {
-         setAiConfig(JSON.parse(savedAiConfig));
-       } catch (e) { console.error("Error loading AI config", e); }
-    }
   }, []);
 
-  // 2. Save Data
+  // 2. Save Data (Active Game)
   useEffect(() => {
     if (!isSetupMode && players.length > 0) {
       localStorage.setItem(STORAGE_KEY_PLAYERS, JSON.stringify(players));
@@ -119,10 +146,19 @@ const App: React.FC = () => {
     }
   }, [players, myId, myRole, isSetupMode, gameState, gameEvents]);
 
-  // 3. Save AI Config
+  // 3. Save AI Config (Persist immediately on change)
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_AI_CONFIG, JSON.stringify(aiConfig));
   }, [aiConfig]);
+
+  // 4. Save Setup Config (Persistent Preferences)
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_SETUP_CONFIG, JSON.stringify({
+      roleCounts,
+      myId,
+      myRole
+    }));
+  }, [roleCounts, myId, myRole]);
 
   const initGame = () => {
     const initialPlayers: Player[] = Array.from({ length: totalPlayers }, (_, i) => ({
@@ -142,7 +178,7 @@ const App: React.FC = () => {
         witchPoisonUsed: false,
         guardLastProtectedId: null,
         hunterGunStatus: true,
-        roleCounts: roleCounts, // Save the config
+        roleCounts: roleCounts, // Save the config into the game state
     });
     setIsSetupMode(false);
     setShowSettingsMenu(false);
@@ -193,14 +229,24 @@ const App: React.FC = () => {
     setShowSettingsMenu(false);
   };
 
-  const endGame = () => {
-    if(window.confirm("确定要结束本局游戏并返回配置页面吗？所有当前进度将丢失。")) {
-        localStorage.removeItem(STORAGE_KEY_PLAYERS);
-        localStorage.removeItem(STORAGE_KEY_META);
-        localStorage.removeItem(STORAGE_KEY_LOGS);
-        setIsSetupMode(true);
-        setShowSettingsMenu(false);
-    }
+  const requestEndGame = () => {
+    setShowSettingsMenu(false);
+    setShowEndGameModal(true);
+  };
+
+  const confirmEndGame = () => {
+    localStorage.removeItem(STORAGE_KEY_PLAYERS);
+    localStorage.removeItem(STORAGE_KEY_META);
+    localStorage.removeItem(STORAGE_KEY_LOGS);
+    
+    // Explicitly clear state
+    setPlayers([]);
+    setGameEvents([]);
+    
+    // Note: We do NOT remove STORAGE_KEY_SETUP_CONFIG or STORAGE_KEY_AI_CONFIG
+    // State variables (roleCounts, etc.) retain their current values (which match the game we just ended)
+    setIsSetupMode(true);
+    setShowEndGameModal(false);
   };
 
   const handleAIProviderChange = (provider: string) => {
@@ -311,16 +357,101 @@ const App: React.FC = () => {
                     </div>
                 </div>
              </div>
-
-            <button 
-                onClick={initGame} 
-                disabled={totalPlayers < 6}
-                className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-blue-500/20 transition-all"
-            >
-                <Play size={20} fill="currentColor" /> 开始游戏
-            </button>
+            
+            <div className="space-y-3 pt-2">
+                 <button 
+                    onClick={initGame} 
+                    disabled={totalPlayers < 6}
+                    className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-blue-500/20 transition-all"
+                >
+                    <Play size={20} fill="currentColor" /> 开始游戏
+                </button>
+                
+                <div className="flex justify-center">
+                     <button 
+                        onClick={() => setShowAISettings(true)} 
+                        className="text-xs text-slate-500 hover:text-blue-400 flex items-center gap-1 transition-colors"
+                    >
+                        <Bot size={12} />
+                        配置 AI 服务
+                    </button>
+                </div>
+            </div>
           </div>
         </div>
+
+        {/* AI Settings Modal (Available in Setup Mode too) */}
+        {showAISettings && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+                <div className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-700 shadow-2xl p-6 space-y-5 animate-in slide-in-from-bottom-10">
+                    <div className="flex justify-between items-center">
+                        <h3 className="text-xl font-bold text-white flex items-center gap-2"><Bot size={20} className="text-blue-400" /> AI 军师配置</h3>
+                        <button onClick={() => setShowAISettings(false)} className="p-1 hover:bg-slate-800 rounded-full"><X size={20} className="text-slate-400"/></button>
+                    </div>
+                    
+                    <div className="space-y-4">
+                        <div>
+                            <label className="text-xs text-slate-400 font-bold uppercase mb-2 block">选择提供商</label>
+                            <div className="grid grid-cols-3 gap-2">
+                                {['deepseek', 'kimi', 'openai', 'custom'].map(p => (
+                                    <button 
+                                        key={p}
+                                        onClick={() => handleAIProviderChange(p)}
+                                        className={`py-2 text-sm font-medium rounded-lg border capitalize transition-all ${aiConfig.provider === p ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'}`}
+                                    >
+                                        {p}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                            <div>
+                                <label className="text-xs text-slate-500 block mb-1">API Key (令牌)</label>
+                                <input 
+                                    type="password" 
+                                    value={aiConfig.apiKey}
+                                    onChange={(e) => setAiConfig(prev => ({...prev, apiKey: e.target.value}))}
+                                    placeholder="sk-..."
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-xs text-slate-500 block mb-1">Base URL (接口地址)</label>
+                                <input 
+                                    type="text" 
+                                    value={aiConfig.baseUrl}
+                                    onChange={(e) => setAiConfig(prev => ({...prev, baseUrl: e.target.value}))}
+                                    placeholder="https://api.example.com/v1"
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                                />
+                            </div>
+                             <div>
+                                <label className="text-xs text-slate-500 block mb-1">Model Name (模型名称)</label>
+                                <input 
+                                    type="text" 
+                                    value={aiConfig.model}
+                                    onChange={(e) => setAiConfig(prev => ({...prev, model: e.target.value}))}
+                                    placeholder="gpt-4o"
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                                />
+                            </div>
+                        </div>
+                        
+                        <p className="text-xs text-slate-500">
+                            * 配置已自动保存到本地。
+                        </p>
+                    </div>
+
+                    <button 
+                        onClick={() => setShowAISettings(false)}
+                        className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl border border-slate-700 transition-colors"
+                    >
+                        关闭
+                    </button>
+                </div>
+            </div>
+        )}
       </div>
      );
   }
@@ -362,7 +493,7 @@ const App: React.FC = () => {
                     <button onClick={exportData} className="w-full text-left px-4 py-3 text-sm text-slate-300 hover:bg-slate-800 flex items-center gap-2 border-t border-slate-800">
                         <Download size={16} /> 导出数据
                     </button>
-                    <button onClick={endGame} className="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-950/30 border-t border-slate-800 flex items-center gap-2">
+                    <button onClick={requestEndGame} className="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-950/30 border-t border-slate-800 flex items-center gap-2">
                         <Flag size={16} /> 结束本局
                     </button>
                 </div>
@@ -448,7 +579,7 @@ const App: React.FC = () => {
                     </div>
                     
                     <p className="text-xs text-slate-500">
-                        * API Key 仅保存在您的本地浏览器中，不会上传到任何服务器。
+                        * 配置已自动保存到本地。
                     </p>
                 </div>
 
@@ -456,8 +587,41 @@ const App: React.FC = () => {
                     onClick={() => setShowAISettings(false)}
                     className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl border border-slate-700 transition-colors"
                 >
-                    保存并关闭
+                    关闭
                 </button>
+            </div>
+        </div>
+       )}
+
+       {/* End Game Confirmation Modal */}
+       {showEndGameModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+            <div className="bg-slate-900 w-full max-w-sm rounded-2xl border border-slate-700 shadow-2xl p-6 space-y-5 animate-in zoom-in-95">
+                <div className="flex flex-col items-center text-center space-y-3">
+                    <div className="w-12 h-12 rounded-full bg-red-900/30 flex items-center justify-center">
+                        <AlertTriangle size={24} className="text-red-500" />
+                    </div>
+                    <h3 className="text-lg font-bold text-white">结束本局游戏？</h3>
+                    <p className="text-sm text-slate-400">
+                        当前的所有游戏记录（标记、笔记、AI对话）将被清空。<br/>
+                        <span className="text-slate-500 text-xs">(下一局将保留当前的角色板子配置)</span>
+                    </p>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-3">
+                    <button 
+                        onClick={() => setShowEndGameModal(false)}
+                        className="py-3 rounded-xl font-medium text-slate-300 hover:bg-slate-800 transition-colors"
+                    >
+                        取消
+                    </button>
+                    <button 
+                        onClick={confirmEndGame}
+                        className="py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-lg shadow-red-900/20 transition-colors"
+                    >
+                        确认结束
+                    </button>
+                </div>
             </div>
         </div>
        )}

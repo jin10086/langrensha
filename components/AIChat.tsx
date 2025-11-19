@@ -89,6 +89,20 @@ const AIChat: React.FC<AIChatProps> = ({ myRole, players, events, aiConfig, onOp
 
   return (
     <div className="flex flex-col h-full max-h-[calc(100vh-240px)]">
+      {/* Header / Status Bar */}
+      <div className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800 text-xs rounded-t-xl mx-2 mt-2 border-t border-l border-r">
+        <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse"></div>
+            <span className="text-slate-400">服务商:</span>
+            <span className="font-bold text-blue-400 uppercase tracking-wider">{aiConfig.provider}</span>
+            <span className="text-slate-600 text-[10px] hidden sm:inline font-mono">({aiConfig.model})</span>
+        </div>
+        <button onClick={onOpenSettings} className="text-slate-500 hover:text-slate-300 flex items-center gap-1 transition-colors">
+            <Settings2 size={12} />
+            <span>配置</span>
+        </button>
+      </div>
+
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto space-y-4 p-2">
         {messages.map((msg, idx) => (
