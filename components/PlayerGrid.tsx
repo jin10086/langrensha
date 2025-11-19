@@ -185,11 +185,13 @@ const PlayerGrid: React.FC<PlayerGridProps> = ({ players, currentDay, roleCounts
         {players.map((player) => {
           const isDead = player.status !== PlayerStatus.ALIVE;
           const roleColor = ROLE_COLORS[player.suspectedRole];
-          const claimed = player.claimedRole !== RoleType.UNKNOWN && player.claimedRole !== RoleType.VILLAGER;
           
-          // Check if there's a conflict (e.g. 2 seers claiming)
+          // Logic Update: Show claim for ANY role (including Villager)
+          const claimed = player.claimedRole !== RoleType.UNKNOWN;
+          
+          // Logic Update: Check conflict for ANY role
           let hasConflict = false;
-          if (player.claimedRole !== RoleType.UNKNOWN && player.claimedRole !== RoleType.VILLAGER) {
+          if (player.claimedRole !== RoleType.UNKNOWN) {
               const stats = getRoleStats(player.claimedRole);
               if (stats.claimed > stats.total) hasConflict = true;
           }
