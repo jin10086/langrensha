@@ -1,0 +1,5 @@
+{
+  "name": "WolfPack Companion",
+  "description": "An offline Werewolf (Mafia) game assistant for players. Track roles, take notes, and get AI-powered strategy advice.",
+  "requestFramePermissions": []
+}
