@@ -43,6 +43,12 @@ const PlayerGrid: React.FC<PlayerGridProps> = ({ players, currentDay, roleCounts
 
   const villagerStats = getRoleStats(RoleType.VILLAGER);
 
+  // --- Filter Available Roles ---
+  const availableRoles = Object.values(RoleType).filter(role => {
+      if (role === RoleType.UNKNOWN) return true;
+      return (roleCounts[role] || 0) > 0;
+  });
+
   // --- Action Handlers ---
 
   const handleStatusChange = (status: PlayerStatus) => {
@@ -293,7 +299,7 @@ const PlayerGrid: React.FC<PlayerGridProps> = ({ players, currentDay, roleCounts
                             onChange={(e) => handleRoleClaim(e.target.value as RoleType)}
                             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white outline-none focus:border-blue-500"
                         >
-                            {Object.values(RoleType).map(role => (
+                            {availableRoles.map(role => (
                                 <option key={role} value={role}>{role}</option>
                             ))}
                         </select>
@@ -305,7 +311,7 @@ const PlayerGrid: React.FC<PlayerGridProps> = ({ players, currentDay, roleCounts
                              onChange={(e) => handleLogicRole(e.target.value as RoleType)}
                              className={`w-full border rounded px-2 py-1 text-sm outline-none ${ROLE_COLORS[editingPlayer.suspectedRole]}`}
                         >
-                            {Object.values(RoleType).map(role => (
+                            {availableRoles.map(role => (
                                 <option key={role} value={role}>{role}</option>
                             ))}
                         </select>
@@ -432,12 +438,23 @@ const PlayerGrid: React.FC<PlayerGridProps> = ({ players, currentDay, roleCounts
                                     ) : (
                                         <>
                                             <span className="text-slate-300">我</span>
-                                            <ArrowRight size={10} className="text-slate-500" />
-                                            <span className="text-yellow-400 font-bold">{e.targetId}号</span>
+                                            {e.targetId ? (
+                                                <>
+                                                    <ArrowRight size={10} className="text-slate-500" />
+                                                    <span className="text-yellow-400 font-bold">{e.targetId}号</span>
+                                                </>
+                                            ) : (
+                                                <span className="text-[10px] px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded ml-1">
+                                                    {e.type === 'CLAIM' ? '起跳' : '动作'}
+                                                </span>
+                                            )}
                                         </>
                                     )}
                                     <span className="text-slate-400 ml-auto truncate max-w-[120px]">
-                                        {e.description.split(' ').slice(2).join(' ')}
+                                        {e.type === 'CLAIM' 
+                                            ? e.description.split('：')[1] || e.description 
+                                            : e.description.split(' ').slice(2).join(' ')
+                                        }
                                     </span>
                                 </div>
                             );
