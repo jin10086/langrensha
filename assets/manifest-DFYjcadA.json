@@ -1,0 +1,21 @@
+{
+  "name": "WolfPack 狼人杀助手",
+  "short_name": "WolfPack",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "description": "线下面杀辅助工具，记录局势、AI复盘。",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/616/616408.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/616/616408.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
