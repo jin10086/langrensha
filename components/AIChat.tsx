@@ -1,26 +1,35 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Player, RoleType, ChatMessage, GameEvent } from '../types';
+import { Player, RoleType, ChatMessage, GameEvent, AIConfig } from '../types';
 import { getStrategyAdvice } from '../services/geminiService';
-import { Send, Sparkles, Bot, User } from 'lucide-react';
+import { Send, Sparkles, Bot, User, Settings2 } from 'lucide-react';
 
 interface AIChatProps {
   myRole: RoleType;
   players: Player[];
   events: GameEvent[];
+  aiConfig: AIConfig;
+  onOpenSettings: () => void;
 }
 
-const AIChat: React.FC<AIChatProps> = ({ myRole, players, events }) => {
+const AIChat: React.FC<AIChatProps> = ({ myRole, players, events, aiConfig, onOpenSettings }) => {
   const [query, setQuery] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: 'model',
-      text: `我是你的狼人杀助手。你现在的身份是【${myRole}】。有什么我可以帮你的吗？`,
-      timestamp: Date.now(),
-    }
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Initialize greeting
+  useEffect(() => {
+    if (messages.length === 0) {
+      setMessages([
+        {
+          role: 'model',
+          text: `我是你的狼人杀助手。你现在的身份是【${myRole}】。有什么我可以帮你的吗？`,
+          timestamp: Date.now(),
+        }
+      ]);
+    }
+  }, [myRole]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -32,6 +41,7 @@ const AIChat: React.FC<AIChatProps> = ({ myRole, players, events }) => {
 
   const handleSend = async () => {
     if (!query.trim() || isLoading) return;
+    if (!aiConfig.apiKey) return;
 
     const userMsg: ChatMessage = { role: 'user', text: query, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
@@ -39,7 +49,7 @@ const AIChat: React.FC<AIChatProps> = ({ myRole, players, events }) => {
     setIsLoading(true);
 
     const conversationLog = messages.slice(-6).map(m => `${m.role}: ${m.text}`).join('\n');
-    const responseText = await getStrategyAdvice(myRole, players, events, userMsg.text, conversationLog);
+    const responseText = await getStrategyAdvice(aiConfig, myRole, players, events, userMsg.text, conversationLog);
 
     const botMsg: ChatMessage = { role: 'model', text: responseText, timestamp: Date.now() };
     setMessages(prev => [...prev, botMsg]);
@@ -52,6 +62,30 @@ const AIChat: React.FC<AIChatProps> = ({ myRole, players, events }) => {
     "分析一下起跳的预言家",
     "下一轮我该做什么？"
   ];
+
+  // State: No API Key Configured
+  if (!aiConfig.apiKey) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center p-6 text-center space-y-6 opacity-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="bg-slate-900 p-6 rounded-full border border-slate-800 shadow-xl shadow-slate-900/50">
+           <Sparkles size={48} className="text-slate-600" />
+        </div>
+        <div>
+          <h3 className="text-xl font-bold text-slate-200 mb-2">AI 军师未启用</h3>
+          <p className="text-sm text-slate-500 max-w-xs mx-auto leading-relaxed">
+            配置 API Key 即可激活 AI 助手。<br/>
+            支持 <span className="text-blue-400">DeepSeek</span>, <span className="text-blue-400">Kimi</span>, <span className="text-blue-400">ChatGPT</span> 等模型。
+          </p>
+        </div>
+        <button 
+          onClick={onOpenSettings}
+          className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-lg flex items-center gap-2 transition-all"
+        >
+           <Settings2 size={18} /> 配置 AI 服务
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full max-h-[calc(100vh-240px)]">

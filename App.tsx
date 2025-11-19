@@ -1,15 +1,16 @@
 
 import React, { useState, useEffect } from 'react';
-import { Users, NotebookPen, Bot, Settings, Download, FlaskConical, ShieldAlert, ChevronRight, Plus, Minus, Play, RotateCcw, Flag } from 'lucide-react';
+import { Users, NotebookPen, Settings, Download, FlaskConical, ShieldAlert, ChevronRight, Plus, Minus, Play, RotateCcw, Flag, Sparkles, Bot, X } from 'lucide-react';
 import PlayerGrid from './components/PlayerGrid';
 import GameLogView from './components/NotesView';
 import AIChat from './components/AIChat';
-import { Player, RoleType, PlayerStatus, Tab, GameState, GameEvent } from './types';
+import { Player, RoleType, PlayerStatus, Tab, GameState, GameEvent, AIConfig } from './types';
 
 // Storage Keys
 const STORAGE_KEY_PLAYERS = 'wolfpack_players';
 const STORAGE_KEY_META = 'wolfpack_meta';
 const STORAGE_KEY_LOGS = 'wolfpack_logs';
+const STORAGE_KEY_AI_CONFIG = 'wolfpack_ai_config';
 
 // Default Role Config (Standard 12 players)
 const DEFAULT_ROLES: Record<string, number> = {
@@ -21,9 +22,26 @@ const DEFAULT_ROLES: Record<string, number> = {
   [RoleType.IDIOT]: 1,
 };
 
+// AI Provider Presets
+const AI_PRESETS: Record<string, Partial<AIConfig>> = {
+  deepseek: {
+    baseUrl: 'https://api.deepseek.com',
+    model: 'deepseek-chat'
+  },
+  kimi: {
+    baseUrl: 'https://api.moonshot.cn/v1',
+    model: 'moonshot-v1-8k'
+  },
+  openai: {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini'
+  }
+};
+
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>(Tab.BOARD);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [showAISettings, setShowAISettings] = useState(false);
   
   // Game State
   const [players, setPlayers] = useState<Player[]>([]);
@@ -35,6 +53,14 @@ const App: React.FC = () => {
   // Setup State
   const [roleCounts, setRoleCounts] = useState<Record<string, number>>(DEFAULT_ROLES);
   
+  // AI Config State
+  const [aiConfig, setAiConfig] = useState<AIConfig>({
+    provider: 'deepseek',
+    apiKey: '',
+    baseUrl: 'https://api.deepseek.com',
+    model: 'deepseek-chat'
+  });
+
   const [gameState, setGameState] = useState<GameState>({
     currentDay: 1,
     witchAntidoteUsed: false,
@@ -52,6 +78,7 @@ const App: React.FC = () => {
     const savedPlayers = localStorage.getItem(STORAGE_KEY_PLAYERS);
     const savedMeta = localStorage.getItem(STORAGE_KEY_META);
     const savedLogs = localStorage.getItem(STORAGE_KEY_LOGS);
+    const savedAiConfig = localStorage.getItem(STORAGE_KEY_AI_CONFIG);
 
     if (savedPlayers && savedMeta) {
       try {
@@ -71,6 +98,12 @@ const App: React.FC = () => {
         console.error("Error loading save", e);
       }
     }
+
+    if (savedAiConfig) {
+       try {
+         setAiConfig(JSON.parse(savedAiConfig));
+       } catch (e) { console.error("Error loading AI config", e); }
+    }
   }, []);
 
   // 2. Save Data
@@ -85,6 +118,11 @@ const App: React.FC = () => {
       }));
     }
   }, [players, myId, myRole, isSetupMode, gameState, gameEvents]);
+
+  // 3. Save AI Config
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_AI_CONFIG, JSON.stringify(aiConfig));
+  }, [aiConfig]);
 
   const initGame = () => {
     const initialPlayers: Player[] = Array.from({ length: totalPlayers }, (_, i) => ({
@@ -163,6 +201,19 @@ const App: React.FC = () => {
         setIsSetupMode(true);
         setShowSettingsMenu(false);
     }
+  };
+
+  const handleAIProviderChange = (provider: string) => {
+     if (AI_PRESETS[provider]) {
+         setAiConfig(prev => ({
+             ...prev,
+             provider: provider as any,
+             baseUrl: AI_PRESETS[provider].baseUrl || '',
+             model: AI_PRESETS[provider].model || ''
+         }));
+     } else {
+         setAiConfig(prev => ({ ...prev, provider: 'custom' }));
+     }
   };
 
   // Setup Helpers
@@ -305,7 +356,10 @@ const App: React.FC = () => {
             {/* Dropdown Menu */}
             {showSettingsMenu && (
                 <div className="absolute right-0 top-full mt-2 w-48 bg-slate-900 border border-slate-800 rounded-xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right z-50">
-                    <button onClick={exportData} className="w-full text-left px-4 py-3 text-sm text-slate-300 hover:bg-slate-800 flex items-center gap-2">
+                    <button onClick={() => { setShowAISettings(true); setShowSettingsMenu(false); }} className="w-full text-left px-4 py-3 text-sm text-slate-300 hover:bg-slate-800 flex items-center gap-2">
+                        <Bot size={16} className="text-blue-400" /> AI 设置
+                    </button>
+                    <button onClick={exportData} className="w-full text-left px-4 py-3 text-sm text-slate-300 hover:bg-slate-800 flex items-center gap-2 border-t border-slate-800">
                         <Download size={16} /> 导出数据
                     </button>
                     <button onClick={endGame} className="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-950/30 border-t border-slate-800 flex items-center gap-2">
@@ -335,6 +389,79 @@ const App: React.FC = () => {
           <div className="fixed inset-0 z-20 bg-transparent" onClick={() => setShowSettingsMenu(false)} />
       )}
 
+       {/* AI Settings Modal */}
+       {showAISettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+            <div className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-700 shadow-2xl p-6 space-y-5 animate-in slide-in-from-bottom-10">
+                <div className="flex justify-between items-center">
+                    <h3 className="text-xl font-bold text-white flex items-center gap-2"><Bot size={20} className="text-blue-400" /> AI 军师配置</h3>
+                    <button onClick={() => setShowAISettings(false)} className="p-1 hover:bg-slate-800 rounded-full"><X size={20} className="text-slate-400"/></button>
+                </div>
+                
+                <div className="space-y-4">
+                    <div>
+                        <label className="text-xs text-slate-400 font-bold uppercase mb-2 block">选择提供商</label>
+                        <div className="grid grid-cols-3 gap-2">
+                            {['deepseek', 'kimi', 'openai', 'custom'].map(p => (
+                                <button 
+                                    key={p}
+                                    onClick={() => handleAIProviderChange(p)}
+                                    className={`py-2 text-sm font-medium rounded-lg border capitalize transition-all ${aiConfig.provider === p ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'}`}
+                                >
+                                    {p}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                        <div>
+                            <label className="text-xs text-slate-500 block mb-1">API Key (令牌)</label>
+                            <input 
+                                type="password" 
+                                value={aiConfig.apiKey}
+                                onChange={(e) => setAiConfig(prev => ({...prev, apiKey: e.target.value}))}
+                                placeholder="sk-..."
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs text-slate-500 block mb-1">Base URL (接口地址)</label>
+                            <input 
+                                type="text" 
+                                value={aiConfig.baseUrl}
+                                onChange={(e) => setAiConfig(prev => ({...prev, baseUrl: e.target.value}))}
+                                placeholder="https://api.example.com/v1"
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                            />
+                        </div>
+                         <div>
+                            <label className="text-xs text-slate-500 block mb-1">Model Name (模型名称)</label>
+                            <input 
+                                type="text" 
+                                value={aiConfig.model}
+                                onChange={(e) => setAiConfig(prev => ({...prev, model: e.target.value}))}
+                                placeholder="gpt-4o"
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                            />
+                        </div>
+                    </div>
+                    
+                    <p className="text-xs text-slate-500">
+                        * API Key 仅保存在您的本地浏览器中，不会上传到任何服务器。
+                    </p>
+                </div>
+
+                <button 
+                    onClick={() => setShowAISettings(false)}
+                    className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl border border-slate-700 transition-colors"
+                >
+                    保存并关闭
+                </button>
+            </div>
+        </div>
+       )}
+
       <main className="p-4 max-w-2xl mx-auto min-h-[calc(100vh-180px)]">
         {activeTab === Tab.BOARD && (
           <PlayerGrid 
@@ -349,8 +476,14 @@ const App: React.FC = () => {
         {activeTab === Tab.TIMELINE && (
           <GameLogView events={gameEvents} onDeleteEvent={deleteGameEvent} />
         )}
-        {activeTab === Tab.AI_ASSISTANT && (
-          <AIChat myRole={myRole} players={players} events={gameEvents} />
+        {activeTab === Tab.CHAT && (
+          <AIChat 
+            myRole={myRole} 
+            players={players} 
+            events={gameEvents} 
+            aiConfig={aiConfig}
+            onOpenSettings={() => setShowAISettings(true)}
+          />
         )}
       </main>
 
@@ -358,7 +491,7 @@ const App: React.FC = () => {
         <div className="max-w-2xl mx-auto flex justify-around items-center px-2 pb-2">
           <NavButton active={activeTab === Tab.BOARD} onClick={() => setActiveTab(Tab.BOARD)} icon={<Users size={24} />} label="局势" />
           <NavButton active={activeTab === Tab.TIMELINE} onClick={() => setActiveTab(Tab.TIMELINE)} icon={<NotebookPen size={24} />} label="复盘日志" />
-          <NavButton active={activeTab === Tab.AI_ASSISTANT} onClick={() => setActiveTab(Tab.AI_ASSISTANT)} icon={<Bot size={24} />} label="AI 军师" highlight />
+          <NavButton active={activeTab === Tab.CHAT} onClick={() => setActiveTab(Tab.CHAT)} icon={<Sparkles size={24} />} label="AI 军师" />
         </div>
       </nav>
     </div>

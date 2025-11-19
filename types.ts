@@ -60,10 +60,17 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export interface AIConfig {
+  provider: 'deepseek' | 'kimi' | 'openai' | 'custom';
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+}
+
 export enum Tab {
   BOARD = 'board',
   TIMELINE = 'timeline', // Renamed from NOTES
-  AI_ASSISTANT = 'ai',
+  CHAT = 'chat',
   SETTINGS = 'settings',
 }
 
