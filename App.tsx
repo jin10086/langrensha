@@ -1,6 +1,5 @@
-
 import React, { useState, useEffect } from 'react';
-import { Users, NotebookPen, Settings, Download, FlaskConical, ShieldAlert, ChevronRight, Plus, Minus, Play, RotateCcw, Flag, Sparkles, Bot, X, AlertTriangle } from 'lucide-react';
+import { Users, NotebookPen, Settings, Download, FlaskConical, ShieldAlert, ChevronRight, Plus, Minus, Play, RotateCcw, Flag, Sparkles, Bot, X, AlertTriangle, BadgeAlert } from 'lucide-react';
 import PlayerGrid from './components/PlayerGrid';
 import GameLogView from './components/NotesView';
 import AIChat from './components/AIChat';
@@ -39,6 +38,14 @@ const AI_PRESETS: Record<string, Partial<AIConfig>> = {
   }
 };
 
+const NavButton: React.FC<{ active: boolean; onClick: () => void; icon: React.ReactNode; label: string; highlight?: boolean }> = ({ active, onClick, icon, label, highlight }) => (
+  <button onClick={onClick} className={`flex flex-col items-center justify-center p-2 w-full transition-all duration-200 relative ${active ? 'text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}>
+    {highlight && !active && <span className="absolute top-2 right-8 w-2 h-2 bg-blue-500 rounded-full animate-ping" />}
+    <div className={`${active ? 'transform scale-110' : ''} mb-1`}>{icon}</div>
+    <span className="text-[10px] font-medium tracking-wide">{label}</span>
+  </button>
+);
+
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>(Tab.BOARD);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
@@ -65,7 +72,8 @@ const App: React.FC = () => {
   
   // Setup State
   const [roleCounts, setRoleCounts] = useState<Record<string, number>>(savedSetup?.roleCounts || DEFAULT_ROLES);
-  
+  const [enableSheriff, setEnableSheriff] = useState<boolean>(savedSetup?.enableSheriff ?? true); // Default to true
+
   // AI Config State (Lazy initialization from LocalStorage)
   const [aiConfig, setAiConfig] = useState<AIConfig>(() => {
     try {
@@ -93,11 +101,12 @@ const App: React.FC = () => {
     witchPoisonUsed: false,
     guardLastProtectedId: null,
     hunterGunStatus: true,
-    roleCounts: DEFAULT_ROLES
+    roleCounts: DEFAULT_ROLES,
+    enableSheriff: true
   });
 
   // Derived state for Setup
-  const totalPlayers = Object.values(roleCounts).reduce((a, b) => a + b, 0);
+  const totalPlayers = (Object.values(roleCounts) as number[]).reduce((a, b) => a + b, 0);
 
   // 1. Load Data (Game Progress)
   useEffect(() => {
@@ -108,7 +117,13 @@ const App: React.FC = () => {
     if (savedPlayers && savedMeta) {
       try {
         const meta = JSON.parse(savedMeta);
-        setPlayers(JSON.parse(savedPlayers));
+        // Add migration for new fields if they don't exist in old save
+        const loadedPlayers = (JSON.parse(savedPlayers) as Player[]).map(p => ({
+            ...p,
+            hasWithdrawn: p.hasWithdrawn ?? false,
+            badgeFlow: p.badgeFlow ?? []
+        }));
+        setPlayers(loadedPlayers);
         setMyId(meta.myId);
         setMyRole(meta.myRole);
         
@@ -116,14 +131,14 @@ const App: React.FC = () => {
           currentDay: 1, 
           witchAntidoteUsed: false, 
           witchPoisonUsed: false, 
-          roleCounts: DEFAULT_ROLES 
+          roleCounts: DEFAULT_ROLES,
+          enableSheriff: true
         };
         setGameState(loadedGameState);
         
-        // Sync roleCounts state with the loaded game so setup matches if we restart
-        if (loadedGameState.roleCounts) {
-            setRoleCounts(loadedGameState.roleCounts);
-        }
+        // Sync roleCounts/settings with the loaded game
+        if (loadedGameState.roleCounts) setRoleCounts(loadedGameState.roleCounts);
+        if (loadedGameState.enableSheriff !== undefined) setEnableSheriff(loadedGameState.enableSheriff);
 
         if (savedLogs) setGameEvents(JSON.parse(savedLogs));
         setIsSetupMode(false);
@@ -156,9 +171,10 @@ const App: React.FC = () => {
     localStorage.setItem(STORAGE_KEY_SETUP_CONFIG, JSON.stringify({
       roleCounts,
       myId,
-      myRole
+      myRole,
+      enableSheriff
     }));
-  }, [roleCounts, myId, myRole]);
+  }, [roleCounts, myId, myRole, enableSheriff]);
 
   const initGame = () => {
     const initialPlayers: Player[] = Array.from({ length: totalPlayers }, (_, i) => ({
@@ -168,7 +184,11 @@ const App: React.FC = () => {
       claimedRole: RoleType.UNKNOWN,
       notes: '',
       tags: [],
-      isMe: (i + 1) === myId
+      isMe: (i + 1) === myId,
+      isSheriff: false,
+      isRunningForSheriff: false,
+      hasWithdrawn: false,
+      badgeFlow: []
     }));
     setPlayers(initialPlayers);
     setGameEvents([]);
@@ -178,7 +198,8 @@ const App: React.FC = () => {
         witchPoisonUsed: false,
         guardLastProtectedId: null,
         hunterGunStatus: true,
-        roleCounts: roleCounts, // Save the config into the game state
+        roleCounts: roleCounts,
+        enableSheriff: enableSheriff,
     });
     setIsSetupMode(false);
     setShowSettingsMenu(false);
@@ -243,8 +264,7 @@ const App: React.FC = () => {
     setPlayers([]);
     setGameEvents([]);
     
-    // Note: We do NOT remove STORAGE_KEY_SETUP_CONFIG or STORAGE_KEY_AI_CONFIG
-    // State variables (roleCounts, etc.) retain their current values (which match the game we just ended)
+    // Setup vars persist
     setIsSetupMode(true);
     setShowEndGameModal(false);
   };
@@ -273,6 +293,7 @@ const App: React.FC = () => {
 
   const applyPreset = () => {
     setRoleCounts(DEFAULT_ROLES);
+    setEnableSheriff(true);
   };
 
   if (isSetupMode) {
@@ -327,6 +348,17 @@ const App: React.FC = () => {
                         </div>
                     ))}
                 </div>
+                
+                 {/* Sheriff Toggle */}
+                 <button 
+                    onClick={() => setEnableSheriff(!enableSheriff)}
+                    className={`w-full py-2 px-3 rounded-xl border flex items-center justify-between transition-all ${enableSheriff ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}
+                 >
+                     <span className="flex items-center gap-2 text-sm font-bold"><BadgeAlert size={16} /> 警长竞选 (上警/警徽)</span>
+                     <div className={`w-8 h-4 rounded-full relative transition-colors ${enableSheriff ? 'bg-indigo-500' : 'bg-slate-700'}`}>
+                         <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${enableSheriff ? 'left-4.5' : 'left-0.5'}`} style={{ left: enableSheriff ? '18px' : '2px' }} />
+                     </div>
+                 </button>
 
                 <div className="flex justify-between items-center pt-2">
                     <span className="text-slate-500 text-sm">当前总人数:</span>
@@ -380,7 +412,7 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* AI Settings Modal (Available in Setup Mode too) */}
+        {/* AI Settings Modal */}
         {showAISettings && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
                 <div className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-700 shadow-2xl p-6 space-y-5 animate-in slide-in-from-bottom-10">
@@ -426,146 +458,6 @@ const App: React.FC = () => {
                                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
                                 />
                             </div>
-                             <div>
-                                <label className="text-xs text-slate-500 block mb-1">Model Name (模型名称)</label>
-                                <input 
-                                    type="text" 
-                                    value={aiConfig.model}
-                                    onChange={(e) => setAiConfig(prev => ({...prev, model: e.target.value}))}
-                                    placeholder="gpt-4o"
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
-                                />
-                            </div>
-                        </div>
-                        
-                        <p className="text-xs text-slate-500">
-                            * 配置已自动保存到本地。
-                        </p>
-                    </div>
-
-                    <button 
-                        onClick={() => setShowAISettings(false)}
-                        className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl border border-slate-700 transition-colors"
-                    >
-                        关闭
-                    </button>
-                </div>
-            </div>
-        )}
-      </div>
-     );
-  }
-
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-blue-500/30">
-      
-      {/* Top Bar */}
-      <header className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-md border-b border-slate-800 px-4 py-3 shadow-md">
-        <div className="flex justify-between items-center mb-2 relative">
-          <div className="flex items-center gap-3">
-             <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center font-bold text-white text-lg shadow-lg shadow-blue-900/20">
-               {myId}
-             </div>
-             <div className="flex flex-col leading-tight">
-               <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{myRole}</span>
-               <div className="flex items-center gap-2 text-white font-bold">
-                  <span>第 {gameState.currentDay} 天</span>
-                  <button onClick={nextDay} className="bg-slate-800 px-2 py-0.5 rounded hover:bg-slate-700 text-xs border border-slate-700 flex items-center gap-1 transition-colors">
-                     <ChevronRight size={12} /> 下一天
-                  </button>
-               </div>
-             </div>
-          </div>
-          <div className="relative">
-            <button 
-                onClick={() => setShowSettingsMenu(!showSettingsMenu)} 
-                className={`p-2 rounded-full border transition-all ${showSettingsMenu ? 'bg-blue-900/50 text-blue-400 border-blue-800' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'}`}
-            >
-                <Settings size={18} />
-            </button>
-            
-            {/* Dropdown Menu */}
-            {showSettingsMenu && (
-                <div className="absolute right-0 top-full mt-2 w-48 bg-slate-900 border border-slate-800 rounded-xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right z-50">
-                    <button onClick={() => { setShowAISettings(true); setShowSettingsMenu(false); }} className="w-full text-left px-4 py-3 text-sm text-slate-300 hover:bg-slate-800 flex items-center gap-2">
-                        <Bot size={16} className="text-blue-400" /> AI 设置
-                    </button>
-                    <button onClick={exportData} className="w-full text-left px-4 py-3 text-sm text-slate-300 hover:bg-slate-800 flex items-center gap-2 border-t border-slate-800">
-                        <Download size={16} /> 导出数据
-                    </button>
-                    <button onClick={requestEndGame} className="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-950/30 border-t border-slate-800 flex items-center gap-2">
-                        <Flag size={16} /> 结束本局
-                    </button>
-                </div>
-            )}
-          </div>
-        </div>
-        
-        {/* Quick Status Toggles */}
-        <div className="flex gap-2 overflow-x-auto scrollbar-hide py-1">
-          <button onClick={() => setGameState(p => ({...p, witchAntidoteUsed: !p.witchAntidoteUsed}))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all whitespace-nowrap ${gameState.witchAntidoteUsed ? 'bg-slate-900 text-slate-500 border-slate-800 line-through opacity-60' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'}`}>
-            <FlaskConical size={12} /> 解药
-          </button>
-          <button onClick={() => setGameState(p => ({...p, witchPoisonUsed: !p.witchPoisonUsed}))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all whitespace-nowrap ${gameState.witchPoisonUsed ? 'bg-slate-900 text-slate-500 border-slate-800 line-through opacity-60' : 'bg-purple-500/10 text-purple-400 border-purple-500/30'}`}>
-             <FlaskConical size={12} /> 毒药
-          </button>
-          <button onClick={() => setGameState(p => ({...p, hunterGunStatus: !p.hunterGunStatus}))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all whitespace-nowrap ${!gameState.hunterGunStatus ? 'bg-slate-900 text-slate-500 border-slate-800 opacity-60' : 'bg-orange-500/10 text-orange-400 border-orange-500/30'}`}>
-             <ShieldAlert size={12} /> 猎枪
-          </button>
-        </div>
-      </header>
-      
-      {/* Settings Overlay Backdrop */}
-      {showSettingsMenu && (
-          <div className="fixed inset-0 z-20 bg-transparent" onClick={() => setShowSettingsMenu(false)} />
-      )}
-
-       {/* AI Settings Modal */}
-       {showAISettings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
-            <div className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-700 shadow-2xl p-6 space-y-5 animate-in slide-in-from-bottom-10">
-                <div className="flex justify-between items-center">
-                    <h3 className="text-xl font-bold text-white flex items-center gap-2"><Bot size={20} className="text-blue-400" /> AI 军师配置</h3>
-                    <button onClick={() => setShowAISettings(false)} className="p-1 hover:bg-slate-800 rounded-full"><X size={20} className="text-slate-400"/></button>
-                </div>
-                
-                <div className="space-y-4">
-                    <div>
-                        <label className="text-xs text-slate-400 font-bold uppercase mb-2 block">选择提供商</label>
-                        <div className="grid grid-cols-3 gap-2">
-                            {['deepseek', 'kimi', 'openai', 'custom'].map(p => (
-                                <button 
-                                    key={p}
-                                    onClick={() => handleAIProviderChange(p)}
-                                    className={`py-2 text-sm font-medium rounded-lg border capitalize transition-all ${aiConfig.provider === p ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'}`}
-                                >
-                                    {p}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
-                        <div>
-                            <label className="text-xs text-slate-500 block mb-1">API Key (令牌)</label>
-                            <input 
-                                type="password" 
-                                value={aiConfig.apiKey}
-                                onChange={(e) => setAiConfig(prev => ({...prev, apiKey: e.target.value}))}
-                                placeholder="sk-..."
-                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
-                            />
-                        </div>
-                        <div>
-                            <label className="text-xs text-slate-500 block mb-1">Base URL (接口地址)</label>
-                            <input 
-                                type="text" 
-                                value={aiConfig.baseUrl}
-                                onChange={(e) => setAiConfig(prev => ({...prev, baseUrl: e.target.value}))}
-                                placeholder="https://api.example.com/v1"
-                                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
-                            />
-                        </div>
                          <div>
                             <label className="text-xs text-slate-500 block mb-1">Model Name (模型名称)</label>
                             <input 
@@ -581,50 +473,81 @@ const App: React.FC = () => {
                     <p className="text-xs text-slate-500">
                         * 配置已自动保存到本地。
                     </p>
-                </div>
-
-                <button 
-                    onClick={() => setShowAISettings(false)}
-                    className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl border border-slate-700 transition-colors"
-                >
-                    关闭
-                </button>
-            </div>
-        </div>
-       )}
-
-       {/* End Game Confirmation Modal */}
-       {showEndGameModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
-            <div className="bg-slate-900 w-full max-w-sm rounded-2xl border border-slate-700 shadow-2xl p-6 space-y-5 animate-in zoom-in-95">
-                <div className="flex flex-col items-center text-center space-y-3">
-                    <div className="w-12 h-12 rounded-full bg-red-900/30 flex items-center justify-center">
-                        <AlertTriangle size={24} className="text-red-500" />
-                    </div>
-                    <h3 className="text-lg font-bold text-white">结束本局游戏？</h3>
-                    <p className="text-sm text-slate-400">
-                        当前的所有游戏记录（标记、笔记、AI对话）将被清空。<br/>
-                        <span className="text-slate-500 text-xs">(下一局将保留当前的角色板子配置)</span>
-                    </p>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-3">
+                    
                     <button 
-                        onClick={() => setShowEndGameModal(false)}
-                        className="py-3 rounded-xl font-medium text-slate-300 hover:bg-slate-800 transition-colors"
+                        onClick={() => setShowAISettings(false)}
+                        className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl border border-slate-700 transition-colors"
                     >
-                        取消
-                    </button>
-                    <button 
-                        onClick={confirmEndGame}
-                        className="py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-lg shadow-red-900/20 transition-colors"
-                    >
-                        确认结束
+                        关闭
                     </button>
                 </div>
             </div>
-        </div>
        )}
+      </div>
+     );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 flex flex-col">
+      {/* Header */}
+      <header className="bg-slate-900 border-b border-slate-800 p-3 flex justify-between items-center z-10 sticky top-0 safe-area-top">
+         <div className="flex items-center gap-3">
+             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-lg">
+                 WP
+             </div>
+             <div>
+                 <h1 className="font-bold text-slate-200 leading-none">WolfPack</h1>
+                 <p className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1">
+                     <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                     第 {gameState.currentDay} 天
+                 </p>
+             </div>
+         </div>
+         <div className="flex gap-2">
+             <button onClick={nextDay} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-400 border border-slate-700 transition-all">
+                <ChevronRight size={18} />
+             </button>
+             <button onClick={() => setShowSettingsMenu(!showSettingsMenu)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-400 border border-slate-700 transition-all relative">
+                <Settings size={18} />
+             </button>
+         </div>
+      </header>
+
+      {/* Settings Dropdown */}
+      {showSettingsMenu && (
+          <div className="fixed top-14 right-4 z-50 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 w-48 animate-in slide-in-from-top-2">
+              <button onClick={() => { setShowAISettings(true); setShowSettingsMenu(false); }} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 rounded-lg flex items-center gap-2">
+                  <Bot size={16} /> AI 设置
+              </button>
+              <button onClick={exportData} className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 rounded-lg flex items-center gap-2">
+                  <Download size={16} /> 导出对局
+              </button>
+              <div className="h-px bg-slate-800 my-1"></div>
+              <button onClick={requestEndGame} className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-slate-800 rounded-lg flex items-center gap-2">
+                  <Flag size={16} /> 结束对局
+              </button>
+          </div>
+      )}
+
+      {/* End Game Confirmation */}
+      {showEndGameModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-slate-900 w-full max-w-sm rounded-2xl border border-slate-700 shadow-2xl p-6 text-center animate-in zoom-in-95">
+                  <div className="w-12 h-12 rounded-full bg-red-900/30 flex items-center justify-center mx-auto mb-4">
+                      <AlertTriangle size={24} className="text-red-500" />
+                  </div>
+                  <h3 className="text-lg font-bold text-white mb-2">结束当前对局?</h3>
+                  <p className="text-sm text-slate-400 mb-6">
+                      这将清除所有玩家状态和记录，并返回首页。<br/>
+                      建议先【导出对局】以保存记录。
+                  </p>
+                  <div className="flex gap-3">
+                      <button onClick={() => setShowEndGameModal(false)} className="flex-1 py-2 bg-slate-800 text-white rounded-xl border border-slate-700 font-bold">取消</button>
+                      <button onClick={confirmEndGame} className="flex-1 py-2 bg-red-600 text-white rounded-xl font-bold shadow-lg shadow-red-900/20">确认结束</button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       <main className="p-4 max-w-2xl mx-auto min-h-[calc(100vh-180px)]">
         {activeTab === Tab.BOARD && (
@@ -632,6 +555,7 @@ const App: React.FC = () => {
             players={players} 
             currentDay={gameState.currentDay}
             roleCounts={gameState.roleCounts || DEFAULT_ROLES}
+            enableSheriff={gameState.enableSheriff}
             onUpdatePlayer={updatePlayer} 
             onAddEvent={addGameEvent}
             gameEvents={gameEvents}
@@ -661,13 +585,5 @@ const App: React.FC = () => {
     </div>
   );
 };
-
-const NavButton: React.FC<{ active: boolean; onClick: () => void; icon: React.ReactNode; label: string; highlight?: boolean }> = ({ active, onClick, icon, label, highlight }) => (
-  <button onClick={onClick} className={`flex flex-col items-center justify-center p-2 w-full transition-all duration-200 relative ${active ? 'text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}>
-    {highlight && !active && <span className="absolute top-2 right-8 w-2 h-2 bg-blue-500 rounded-full animate-ping" />}
-    <div className={`${active ? 'transform scale-110' : ''} mb-1`}>{icon}</div>
-    <span className="text-[10px] font-medium tracking-wide">{label}</span>
-  </button>
-);
 
 export default App;

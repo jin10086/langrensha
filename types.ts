@@ -33,6 +33,10 @@ export interface Player {
   tags: PlayerTag[];
   notes: string;
   isMe: boolean;
+  isSheriff: boolean;        // Is holding the badge
+  isRunningForSheriff: boolean; // Is currently running for sheriff
+  hasWithdrawn: boolean;      // Has run and then withdrawn (cannot vote)
+  badgeFlow: number[];        // Array of player IDs for badge flow (usually 1-2)
 }
 
 export interface GameState {
@@ -41,13 +45,14 @@ export interface GameState {
   witchPoisonUsed: boolean;
   guardLastProtectedId: number | null;
   hunterGunStatus: boolean;
-  roleCounts: Record<string, number>; // Stores the initial configuration (e.g., { '狼人': 4, '预言家': 1 })
+  roleCounts: Record<string, number>; // Stores the initial configuration
+  enableSheriff: boolean; // Toggle for Sheriff Election mode
 }
 
 export interface GameEvent {
   id: string;
   day: number;
-  sourceId: number; // Who spoke/acted
+  sourceId: number; // Who spoke/acted (or 0 for system)
   targetId?: number; // Who was affected (optional)
   type: 'CLAIM' | 'CHECK_GOOD' | 'CHECK_BAD' | 'VOTE' | 'DEATH' | 'NOTE';
   description: string;
