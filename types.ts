@@ -25,6 +25,25 @@ export enum PlayerTag {
   KANG_TUI = '抗推', // Push target
 }
 
+export enum SheriffStatus {
+  NOT_JOINED = '未上警',
+  RUNNING = '警上',
+  WITHDRAWN = '已退水',
+}
+
+export enum GamePhase {
+  SETUP = 'SETUP',
+  SHERIFF_ELECTION = 'SHERIFF_ELECTION',
+  DAY_DISCUSSION = 'DAY_DISCUSSION',
+  DAY_VOTE = 'DAY_VOTE',
+  NIGHT = 'NIGHT',
+}
+
+export enum VoteType {
+  SHERIFF = 'SHERIFF',
+  EXILE = 'EXILE',
+}
+
 export interface Player {
   id: number;
   status: PlayerStatus;
@@ -33,6 +52,8 @@ export interface Player {
   tags: PlayerTag[];
   notes: string;
   isMe: boolean;
+  sheriffStatus: SheriffStatus;
+  isSheriff: boolean;
 }
 
 export interface GameState {
@@ -42,6 +63,9 @@ export interface GameState {
   guardLastProtectedId: number | null;
   hunterGunStatus: boolean;
   roleCounts: Record<string, number>; // Stores the initial configuration (e.g., { '狼人': 4, '预言家': 1 })
+  phase: GamePhase;
+  enableSheriff: boolean;
+  sheriffId: number | null;
 }
 
 export interface GameEvent {
@@ -49,7 +73,8 @@ export interface GameEvent {
   day: number;
   sourceId: number; // Who spoke/acted
   targetId?: number; // Who was affected (optional)
-  type: 'CLAIM' | 'CHECK_GOOD' | 'CHECK_BAD' | 'VOTE' | 'DEATH' | 'NOTE';
+  type: 'CLAIM' | 'CHECK_GOOD' | 'CHECK_BAD' | 'VOTE' | 'DEATH' | 'NOTE'
+    | 'SHERIFF_REGISTER' | 'SHERIFF_WITHDRAW' | 'SHERIFF_ELECTED' | 'SHERIFF_VOTE' | 'DAY_VOTE';
   description: string;
   timestamp: number;
 }
@@ -93,3 +118,21 @@ export const TAG_CONFIG: Record<PlayerTag, { color: string, icon: string, label:
   [PlayerTag.YIN_SHUI]: { color: 'bg-slate-200/20 text-slate-300 border-slate-400/50', icon: '🛡️', label: '银水' },
   [PlayerTag.KANG_TUI]: { color: 'bg-orange-500/20 text-orange-300 border-orange-400/50', icon: '🎯', label: '抗推' },
 };
+
+export const SHERIFF_STATUS_CONFIG: Record<SheriffStatus, { icon: string; color: string; label: string }> = {
+  [SheriffStatus.NOT_JOINED]: { icon: '', color: '', label: '' },
+  [SheriffStatus.RUNNING]: { icon: '🎤', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50', label: '警上' },
+  [SheriffStatus.WITHDRAWN]: { icon: '💧', color: 'bg-blue-500/20 text-blue-400 border-blue-500/50', label: '退水' },
+};
+
+export const SHERIFF_BADGE = { icon: '👑', color: 'bg-amber-500 text-amber-900', label: '警长' };
+
+// 新增投票记录接口
+export interface VoteRecord {
+  id: string;
+  day: number;
+  voteType: VoteType;
+  voterId: number;
+  targetId: number;
+  timestamp: number;
+}

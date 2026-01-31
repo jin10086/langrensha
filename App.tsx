@@ -4,7 +4,8 @@ import { Users, NotebookPen, Settings, Download, FlaskConical, ShieldAlert, Chev
 import PlayerGrid from './components/PlayerGrid';
 import GameLogView from './components/NotesView';
 import AIChat from './components/AIChat';
-import { Player, RoleType, PlayerStatus, Tab, GameState, GameEvent, AIConfig } from './types';
+import VotingModal from './components/VotingModal';
+import { Player, RoleType, PlayerStatus, Tab, GameState, GameEvent, AIConfig, SheriffStatus, GamePhase, VoteType, VoteRecord } from './types';
 
 // Storage Keys
 const STORAGE_KEY_PLAYERS = 'wolfpack_players';
@@ -12,6 +13,7 @@ const STORAGE_KEY_META = 'wolfpack_meta';
 const STORAGE_KEY_LOGS = 'wolfpack_logs';
 const STORAGE_KEY_AI_CONFIG = 'wolfpack_ai_config';
 const STORAGE_KEY_SETUP_CONFIG = 'wolfpack_setup_config';
+const STORAGE_KEY_VOTES = 'wolfpack_votes';
 
 // Default Role Config (Standard 12 players)
 const DEFAULT_ROLES: Record<string, number> = {
@@ -44,7 +46,11 @@ const App: React.FC = () => {
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showAISettings, setShowAISettings] = useState(false);
   const [showEndGameModal, setShowEndGameModal] = useState(false);
-  
+
+  // 投票弹窗状态
+  const [showVotingModal, setShowVotingModal] = useState(false);
+  const [currentVoteType, setCurrentVoteType] = useState<VoteType>(VoteType.SHERIFF);
+
   // Load initial setup config
   const getSavedSetup = () => {
     try {
@@ -65,6 +71,7 @@ const App: React.FC = () => {
   
   // Setup State
   const [roleCounts, setRoleCounts] = useState<Record<string, number>>(savedSetup?.roleCounts || DEFAULT_ROLES);
+  const [enableSheriff, setEnableSheriff] = useState<boolean>(savedSetup?.enableSheriff ?? true);
   
   // AI Config State (Lazy initialization from LocalStorage)
   const [aiConfig, setAiConfig] = useState<AIConfig>(() => {
@@ -93,8 +100,14 @@ const App: React.FC = () => {
     witchPoisonUsed: false,
     guardLastProtectedId: null,
     hunterGunStatus: true,
-    roleCounts: DEFAULT_ROLES
+    roleCounts: DEFAULT_ROLES,
+    phase: GamePhase.SETUP,
+    enableSheriff: true,
+    sheriffId: null
   });
+
+  // 投票记录状态
+  const [votes, setVotes] = useState<VoteRecord[]>([]);
 
   // Derived state for Setup
   const totalPlayers = Object.values(roleCounts).reduce((a, b) => a + b, 0);
@@ -112,11 +125,14 @@ const App: React.FC = () => {
         setMyId(meta.myId);
         setMyRole(meta.myRole);
         
-        const loadedGameState = meta.gameState || { 
-          currentDay: 1, 
-          witchAntidoteUsed: false, 
-          witchPoisonUsed: false, 
-          roleCounts: DEFAULT_ROLES 
+        const loadedGameState = meta.gameState || {
+          currentDay: 1,
+          witchAntidoteUsed: false,
+          witchPoisonUsed: false,
+          roleCounts: DEFAULT_ROLES,
+          phase: GamePhase.DAY_DISCUSSION,
+          enableSheriff: false,
+          sheriffId: null
         };
         setGameState(loadedGameState);
         
@@ -126,6 +142,11 @@ const App: React.FC = () => {
         }
 
         if (savedLogs) setGameEvents(JSON.parse(savedLogs));
+
+        // Load votes
+        const savedVotes = localStorage.getItem(STORAGE_KEY_VOTES);
+        if (savedVotes) setVotes(JSON.parse(savedVotes));
+
         setIsSetupMode(false);
       } catch (e) {
         console.error("Error loading save", e);
@@ -138,13 +159,14 @@ const App: React.FC = () => {
     if (!isSetupMode && players.length > 0) {
       localStorage.setItem(STORAGE_KEY_PLAYERS, JSON.stringify(players));
       localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(gameEvents));
+      localStorage.setItem(STORAGE_KEY_VOTES, JSON.stringify(votes));
       localStorage.setItem(STORAGE_KEY_META, JSON.stringify({
         myId,
         myRole,
         gameState
       }));
     }
-  }, [players, myId, myRole, isSetupMode, gameState, gameEvents]);
+  }, [players, myId, myRole, isSetupMode, gameState, gameEvents, votes]);
 
   // 3. Save AI Config (Persist immediately on change)
   useEffect(() => {
@@ -156,9 +178,10 @@ const App: React.FC = () => {
     localStorage.setItem(STORAGE_KEY_SETUP_CONFIG, JSON.stringify({
       roleCounts,
       myId,
-      myRole
+      myRole,
+      enableSheriff
     }));
-  }, [roleCounts, myId, myRole]);
+  }, [roleCounts, myId, myRole, enableSheriff]);
 
   const initGame = () => {
     const initialPlayers: Player[] = Array.from({ length: totalPlayers }, (_, i) => ({
@@ -168,20 +191,40 @@ const App: React.FC = () => {
       claimedRole: RoleType.UNKNOWN,
       notes: '',
       tags: [],
-      isMe: (i + 1) === myId
+      isMe: (i + 1) === myId,
+      sheriffStatus: SheriffStatus.NOT_JOINED,
+      isSheriff: false
     }));
     setPlayers(initialPlayers);
     setGameEvents([]);
+    setVotes([]);
+
+    // 判断是否开启上警功能
+    const initialPhase = enableSheriff ? GamePhase.SHERIFF_ELECTION : GamePhase.DAY_DISCUSSION;
+
     setGameState({
         currentDay: 1,
         witchAntidoteUsed: false,
         witchPoisonUsed: false,
         guardLastProtectedId: null,
         hunterGunStatus: true,
-        roleCounts: roleCounts, // Save the config into the game state
+        roleCounts: roleCounts,
+        phase: initialPhase,
+        enableSheriff,
+        sheriffId: null
     });
     setIsSetupMode(false);
     setShowSettingsMenu(false);
+
+    // 添加上警阶段事件
+    if (enableSheriff) {
+      addGameEvent({
+        day: 1,
+        sourceId: 0,
+        type: 'NOTE',
+        description: '--- 警长竞选阶段 ---'
+      });
+    }
   };
 
   const updatePlayer = (id: number, updates: Partial<Player>) => {
@@ -238,11 +281,13 @@ const App: React.FC = () => {
     localStorage.removeItem(STORAGE_KEY_PLAYERS);
     localStorage.removeItem(STORAGE_KEY_META);
     localStorage.removeItem(STORAGE_KEY_LOGS);
-    
+    localStorage.removeItem(STORAGE_KEY_VOTES);
+
     // Explicitly clear state
     setPlayers([]);
     setGameEvents([]);
-    
+    setVotes([]);
+
     // Note: We do NOT remove STORAGE_KEY_SETUP_CONFIG or STORAGE_KEY_AI_CONFIG
     // State variables (roleCounts, etc.) retain their current values (which match the game we just ended)
     setIsSetupMode(true);
@@ -273,6 +318,234 @@ const App: React.FC = () => {
 
   const applyPreset = () => {
     setRoleCounts(DEFAULT_ROLES);
+  };
+
+  // ==================== 上警与投票功能 ====================
+
+  // 上警报名
+  const registerSheriff = (playerId: number) => {
+    const player = players.find(p => p.id === playerId);
+    if (!player || player.status !== PlayerStatus.ALIVE) return;
+
+    updatePlayer(playerId, { sheriffStatus: SheriffStatus.RUNNING });
+    addGameEvent({
+      day: gameState.currentDay,
+      sourceId: playerId,
+      type: 'SHERIFF_REGISTER',
+      description: `${playerId}号玩家上警`
+    });
+  };
+
+  // 退水
+  const withdrawSheriff = (playerId: number) => {
+    const player = players.find(p => p.id === playerId);
+    if (!player || player.sheriffStatus !== SheriffStatus.RUNNING) return;
+
+    updatePlayer(playerId, { sheriffStatus: SheriffStatus.WITHDRAWN });
+    addGameEvent({
+      day: gameState.currentDay,
+      sourceId: playerId,
+      type: 'SHERIFF_WITHDRAW',
+      description: `${playerId}号玩家退水`
+    });
+  };
+
+  // 当选警长
+  const electSheriff = (playerId: number) => {
+    // 清除之前的警长
+    const currentSheriff = players.find(p => p.isSheriff);
+    if (currentSheriff) {
+      updatePlayer(currentSheriff.id, { isSheriff: false });
+    }
+
+    updatePlayer(playerId, { isSheriff: true });
+    setGameState(prev => ({ ...prev, sheriffId: playerId }));
+    addGameEvent({
+      day: gameState.currentDay,
+      sourceId: playerId,
+      type: 'SHERIFF_ELECTED',
+      description: `${playerId}号玩家当选警长`
+    });
+  };
+
+  // 提交投票（批量）
+  const submitVote = (voterIds: number[], targetId: number, voteType: VoteType) => {
+    const eventType = voteType === VoteType.SHERIFF ? 'SHERIFF_VOTE' : 'DAY_VOTE';
+    const voteTypeLabel = voteType === VoteType.SHERIFF ? '警长投票' : '放逐投票';
+
+    // 批量处理投票
+    voterIds.forEach(voterId => {
+      // 检查是否已投票
+      const existingVote = votes.find(v =>
+        v.day === gameState.currentDay &&
+        v.voteType === voteType &&
+        v.voterId === voterId
+      );
+
+      if (existingVote) {
+        // 更新投票
+        setVotes(prev => prev.map(v =>
+          v.id === existingVote.id
+            ? { ...v, targetId, timestamp: Date.now() }
+            : v
+        ));
+      } else {
+        // 新增投票
+        const newVote: VoteRecord = {
+          id: Math.random().toString(36).substring(2, 9),
+          day: gameState.currentDay,
+          voteType,
+          voterId,
+          targetId,
+          timestamp: Date.now()
+        };
+        setVotes(prev => [...prev, newVote]);
+      }
+    });
+
+    // 记录批量事件（合并显示）
+    const votersStr = voterIds.join('、');
+    addGameEvent({
+      day: gameState.currentDay,
+      sourceId: voterIds[0], // 用第一个投票人作为sourceId
+      targetId,
+      type: eventType,
+      description: `${voteTypeLabel}: ${votersStr}号 → ${targetId}号`
+    });
+  };
+
+  // 计算投票结果
+  const calculateVoteResult = (voteType: VoteType, day: number): Map<number, number> => {
+    const dayVotes = votes.filter(v => v.day === day && v.voteType === voteType);
+    const voteCount = new Map<number, number>();
+
+    // 初始化
+    players.forEach(p => {
+      if (p.status === PlayerStatus.ALIVE) {
+        voteCount.set(p.id, 0);
+      }
+    });
+
+    // 统计票数
+    dayVotes.forEach(vote => {
+      const current = voteCount.get(vote.targetId) || 0;
+      let weight = 1;
+
+      // 放逐投票时，警长有1.5票
+      if (voteType === VoteType.EXILE) {
+        const voter = players.find(p => p.id === vote.voterId);
+        if (voter?.isSheriff) {
+          weight = 1.5;
+        }
+      }
+
+      voteCount.set(vote.targetId, current + weight);
+    });
+
+    return voteCount;
+  };
+
+  // 获取某玩家在某天的投票
+  const getPlayerVote = (playerId: number, voteType: VoteType, day: number): number | null => {
+    const vote = votes.find(v =>
+      v.day === day &&
+      v.voteType === voteType &&
+      v.voterId === playerId
+    );
+    return vote?.targetId ?? null;
+  };
+
+  // 清除某天的投票
+  const clearVotes = (voteType: VoteType, day: number) => {
+    setVotes(prev => prev.filter(v => !(v.day === day && v.voteType === voteType)));
+  };
+
+  // 阶段切换
+  const advancePhase = () => {
+    const { phase, enableSheriff } = gameState;
+
+    switch (phase) {
+      case GamePhase.SHERIFF_ELECTION:
+        setGameState(prev => ({ ...prev, phase: GamePhase.DAY_DISCUSSION }));
+        addGameEvent({
+          day: gameState.currentDay,
+          sourceId: 0,
+          type: 'NOTE',
+          description: '--- 警长竞选结束，进入白天讨论 ---'
+        });
+        break;
+      case GamePhase.DAY_DISCUSSION:
+        setGameState(prev => ({ ...prev, phase: GamePhase.DAY_VOTE }));
+        break;
+      case GamePhase.DAY_VOTE:
+        setGameState(prev => ({ ...prev, phase: GamePhase.NIGHT }));
+        break;
+      case GamePhase.NIGHT:
+        const nextDay = gameState.currentDay + 1;
+        // 只有第一天有警长竞选
+        const nextPhase = (enableSheriff && nextDay === 1)
+          ? GamePhase.SHERIFF_ELECTION
+          : GamePhase.DAY_DISCUSSION;
+
+        setGameState(prev => ({
+          ...prev,
+          currentDay: nextDay,
+          phase: nextPhase
+        }));
+        addGameEvent({
+          day: nextDay,
+          sourceId: 0,
+          type: 'NOTE',
+          description: `--- 进入第 ${nextDay} 天 ---`
+        });
+        // 只有第一天显示警长竞选阶段
+        if (enableSheriff && nextDay === 1) {
+          addGameEvent({
+            day: nextDay,
+            sourceId: 0,
+            type: 'NOTE',
+            description: '--- 警长竞选阶段 ---'
+          });
+        }
+        break;
+    }
+  };
+
+  // 打开投票弹窗
+  const openVotingModal = (voteType: VoteType) => {
+    setCurrentVoteType(voteType);
+    setShowVotingModal(true);
+  };
+
+  // 清空当前投票
+  const handleClearVotes = () => {
+    clearVotes(currentVoteType, gameState.currentDay);
+  };
+
+  // 完成投票
+  const handleCompleteVoting = () => {
+    setShowVotingModal(false);
+
+    // 如果是警长竞选投票，自动设置警长
+    if (currentVoteType === VoteType.SHERIFF) {
+      const results = calculateVoteResult(VoteType.SHERIFF, gameState.currentDay);
+      let maxVotes = 0;
+      let winner: number | null = null;
+
+      results.forEach((count, playerId) => {
+        if (count > maxVotes) {
+          maxVotes = count;
+          winner = playerId;
+        }
+      });
+
+      if (winner) {
+        electSheriff(winner);
+      }
+    }
+
+    // 进入下一阶段
+    advancePhase();
   };
 
   if (isSetupMode) {
@@ -333,6 +606,23 @@ const App: React.FC = () => {
                     <span className="text-2xl font-bold text-white bg-slate-800 px-4 py-1 rounded-lg border border-slate-700">
                         {totalPlayers} <span className="text-xs font-normal text-slate-400">人</span>
                     </span>
+                </div>
+
+                {/* Sheriff Election Toggle */}
+                <div className="flex items-center justify-between bg-slate-950 p-3 rounded-xl border border-slate-800">
+                    <div className="flex items-center gap-2">
+                        <span className="text-amber-400">👑</span>
+                        <div className="flex flex-col">
+                            <span className="text-sm text-slate-300 font-medium">开启上警功能</span>
+                            <span className="text-xs text-slate-500">警长拥有1.5票归票权</span>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => setEnableSheriff(!enableSheriff)}
+                        className={`w-12 h-6 rounded-full transition-colors relative ${enableSheriff ? 'bg-blue-600' : 'bg-slate-700'}`}
+                    >
+                        <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${enableSheriff ? 'translate-x-7' : 'translate-x-1'}`} />
+                    </button>
                 </div>
              </div>
 
@@ -470,9 +760,15 @@ const App: React.FC = () => {
                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{myRole}</span>
                <div className="flex items-center gap-2 text-white font-bold">
                   <span>第 {gameState.currentDay} 天</span>
-                  <button onClick={nextDay} className="bg-slate-800 px-2 py-0.5 rounded hover:bg-slate-700 text-xs border border-slate-700 flex items-center gap-1 transition-colors">
-                     <ChevronRight size={12} /> 下一天
-                  </button>
+                  {gameState.phase === GamePhase.SHERIFF_ELECTION && (
+                    <span className="text-[10px] text-amber-400">👑 上警</span>
+                  )}
+                  {gameState.phase === GamePhase.DAY_VOTE && (
+                    <span className="text-[10px] text-red-400">🗳️ 投票</span>
+                  )}
+                  {gameState.phase === GamePhase.NIGHT && (
+                    <span className="text-[10px] text-purple-400">🌙 夜晚</span>
+                  )}
                </div>
              </div>
           </div>
@@ -512,6 +808,34 @@ const App: React.FC = () => {
           <button onClick={() => setGameState(p => ({...p, hunterGunStatus: !p.hunterGunStatus}))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all whitespace-nowrap ${!gameState.hunterGunStatus ? 'bg-slate-900 text-slate-500 border-slate-800 opacity-60' : 'bg-orange-500/10 text-orange-400 border-orange-500/30'}`}>
              <ShieldAlert size={12} /> 猎枪
           </button>
+
+          {/* 投票按钮 */}
+          {gameState.phase === GamePhase.SHERIFF_ELECTION && gameState.enableSheriff && (
+            <button
+              onClick={() => openVotingModal(VoteType.SHERIFF)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all whitespace-nowrap bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20"
+            >
+              <span>👑</span> 警长投票
+            </button>
+          )}
+          {gameState.phase === GamePhase.DAY_VOTE && (
+            <button
+              onClick={() => openVotingModal(VoteType.EXILE)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all whitespace-nowrap bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20"
+            >
+              <span>🗳️</span> 放逐投票
+            </button>
+          )}
+
+          {/* 阶段控制按钮 */}
+          {gameState.phase !== GamePhase.DAY_VOTE && (
+            <button
+              onClick={advancePhase}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all whitespace-nowrap bg-blue-500/10 text-blue-400 border-blue-500/30 hover:bg-blue-500/20"
+            >
+              <ChevronRight size={12} /> 下一阶段
+            </button>
+          )}
         </div>
       </header>
       
@@ -593,6 +917,22 @@ const App: React.FC = () => {
         </div>
        )}
 
+       {/* Voting Modal */}
+       {showVotingModal && (
+        <VotingModal
+          isOpen={showVotingModal}
+          onClose={() => setShowVotingModal(false)}
+          voteType={currentVoteType}
+          players={players}
+          currentDay={gameState.currentDay}
+          votes={votes}
+          sheriffId={gameState.sheriffId}
+          onSubmitVote={(voterIds, targetId) => submitVote(voterIds, targetId, currentVoteType)}
+          onClearVotes={handleClearVotes}
+          onCompleteVoting={handleCompleteVoting}
+        />
+       )}
+
        {/* End Game Confirmation Modal */}
        {showEndGameModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
@@ -628,13 +968,18 @@ const App: React.FC = () => {
 
       <main className="p-4 max-w-2xl mx-auto min-h-[calc(100vh-180px)]">
         {activeTab === Tab.BOARD && (
-          <PlayerGrid 
-            players={players} 
+          <PlayerGrid
+            players={players}
             currentDay={gameState.currentDay}
             roleCounts={gameState.roleCounts || DEFAULT_ROLES}
-            onUpdatePlayer={updatePlayer} 
+            onUpdatePlayer={updatePlayer}
             onAddEvent={addGameEvent}
             gameEvents={gameEvents}
+            phase={gameState.phase}
+            enableSheriff={gameState.enableSheriff}
+            onRegisterSheriff={registerSheriff}
+            onWithdrawSheriff={withdrawSheriff}
+            onElectSheriff={electSheriff}
           />
         )}
         {activeTab === Tab.TIMELINE && (

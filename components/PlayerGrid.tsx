@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Player, PlayerStatus, RoleType, ROLE_COLORS, PlayerTag, TAG_CONFIG, GameEvent } from '../types';
+import { Player, PlayerStatus, RoleType, ROLE_COLORS, PlayerTag, TAG_CONFIG, GameEvent, SheriffStatus, SHERIFF_STATUS_CONFIG, SHERIFF_BADGE, GamePhase, VoteType } from '../types';
 import { Skull, XCircle, X, ShieldCheck, ShieldAlert, Target, Mic, ArrowRightLeft, ArrowRight, FlaskConical, AlertTriangle } from 'lucide-react';
 
 interface PlayerGridProps {
@@ -10,9 +10,27 @@ interface PlayerGridProps {
   onUpdatePlayer: (id: number, updates: Partial<Player>) => void;
   onAddEvent: (event: Omit<GameEvent, 'id' | 'timestamp'>) => void;
   gameEvents: GameEvent[];
+  // 上警相关
+  phase?: GamePhase;
+  enableSheriff?: boolean;
+  onRegisterSheriff?: (playerId: number) => void;
+  onWithdrawSheriff?: (playerId: number) => void;
+  onElectSheriff?: (playerId: number) => void;
 }
 
-const PlayerGrid: React.FC<PlayerGridProps> = ({ players, currentDay, roleCounts, onUpdatePlayer, onAddEvent, gameEvents }) => {
+const PlayerGrid: React.FC<PlayerGridProps> = ({
+  players,
+  currentDay,
+  roleCounts,
+  onUpdatePlayer,
+  onAddEvent,
+  gameEvents,
+  phase,
+  enableSheriff,
+  onRegisterSheriff,
+  onWithdrawSheriff,
+  onElectSheriff
+}) => {
   const [editingPlayerId, setEditingPlayerId] = useState<number | null>(null);
   const [targetId, setTargetId] = useState<number | null>(null);
 
@@ -212,8 +230,10 @@ const PlayerGrid: React.FC<PlayerGridProps> = ({ players, currentDay, roleCounts
                 <span className={`
                   flex items-center justify-center w-7 h-7 rounded-full font-bold text-sm
                   ${player.isMe ? 'bg-blue-600 text-white ring-2 ring-blue-400' : 'bg-slate-700 text-slate-300'}
+                  ${player.isSheriff ? 'ring-2 ring-amber-500' : ''}
                 `}>
                   {player.id}
+                  {player.isSheriff && <span className="absolute -top-1 -right-1 text-xs">👑</span>}
                 </span>
                 <div className="flex gap-1 items-center">
                   {hasConflict && !isDead && <AlertTriangle size={14} className="text-yellow-500 animate-pulse" />}
@@ -236,8 +256,18 @@ const PlayerGrid: React.FC<PlayerGridProps> = ({ players, currentDay, roleCounts
                 {player.suspectedRole}
               </div>
 
-              {/* Tags */}
+              {/* Tags & Sheriff Status */}
               <div className="relative z-10 flex flex-wrap gap-1 mt-auto min-h-[20px]">
+                {player.isSheriff && (
+                  <span className="text-[10px] leading-none px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/50">
+                    👑 警长
+                  </span>
+                )}
+                {enableSheriff && player.sheriffStatus !== SheriffStatus.NOT_JOINED && !player.isSheriff && (
+                  <span className={`text-[10px] leading-none px-1 py-0.5 rounded border ${SHERIFF_STATUS_CONFIG[player.sheriffStatus].color}`}>
+                    {SHERIFF_STATUS_CONFIG[player.sheriffStatus].icon} {SHERIFF_STATUS_CONFIG[player.sheriffStatus].label}
+                  </span>
+                )}
                 {player.tags.map(tag => (
                   <span key={tag} className="text-[10px] leading-none px-1 py-0.5 rounded bg-slate-950 text-slate-300 border border-slate-800">
                     {TAG_CONFIG[tag].icon}
@@ -276,7 +306,7 @@ const PlayerGrid: React.FC<PlayerGridProps> = ({ players, currentDay, roleCounts
                         onClick={() => handleStatusChange(status)}
                         className={`
                         py-1.5 px-2 rounded text-xs font-medium border transition-colors
-                        ${editingPlayer.status === status 
+                        ${editingPlayer.status === status
                             ? (status === PlayerStatus.ALIVE ? 'bg-emerald-600/20 border-emerald-500 text-emerald-400' : 'bg-red-600/20 border-red-500 text-red-400')
                             : 'bg-slate-800 border-slate-700 text-slate-400'}
                         `}
@@ -296,8 +326,8 @@ const PlayerGrid: React.FC<PlayerGridProps> = ({ players, currentDay, roleCounts
                                 </span>
                             )}
                         </div>
-                        <select 
-                            value={editingPlayer.claimedRole} 
+                        <select
+                            value={editingPlayer.claimedRole}
                             onChange={(e) => handleRoleClaim(e.target.value as RoleType)}
                             className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white outline-none focus:border-blue-500"
                         >
@@ -308,8 +338,8 @@ const PlayerGrid: React.FC<PlayerGridProps> = ({ players, currentDay, roleCounts
                     </div>
                     <div className="flex-1">
                         <label className="text-[10px] text-slate-500 uppercase block mb-1">我认为Ta是 (暗)</label>
-                        <select 
-                             value={editingPlayer.suspectedRole} 
+                        <select
+                             value={editingPlayer.suspectedRole}
                              onChange={(e) => handleLogicRole(e.target.value as RoleType)}
                              className={`w-full border rounded px-2 py-1 text-sm outline-none ${ROLE_COLORS[editingPlayer.suspectedRole]}`}
                         >
@@ -320,6 +350,64 @@ const PlayerGrid: React.FC<PlayerGridProps> = ({ players, currentDay, roleCounts
                     </div>
                 </div>
             </div>
+
+            {/* Section: Sheriff Election */}
+            {enableSheriff && editingPlayer.status === PlayerStatus.ALIVE && phase === GamePhase.SHERIFF_ELECTION && (
+                <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800 space-y-3">
+                    <h4 className="text-xs font-bold text-amber-400 uppercase flex items-center gap-2">
+                        <span>👑</span> 警长竞选
+                    </h4>
+                    <div className="flex gap-2">
+                        {editingPlayer.sheriffStatus === SheriffStatus.NOT_JOINED ? (
+                            <button
+                                onClick={() => {
+                                    onRegisterSheriff?.(editingPlayer.id);
+                                    closeModal();
+                                }}
+                                className="flex-1 py-2 rounded-lg text-xs font-medium bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 hover:bg-yellow-500/30 transition-colors"
+                            >
+                                🎤 上警
+                            </button>
+                        ) : editingPlayer.sheriffStatus === SheriffStatus.RUNNING ? (
+                            <>
+                                <button
+                                    onClick={() => {
+                                        onWithdrawSheriff?.(editingPlayer.id);
+                                        closeModal();
+                                    }}
+                                    className="flex-1 py-2 rounded-lg text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/50 hover:bg-blue-500/30 transition-colors"
+                                >
+                                    💧 退水
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        onElectSheriff?.(editingPlayer.id);
+                                        closeModal();
+                                    }}
+                                    className="flex-1 py-2 rounded-lg text-xs font-medium bg-amber-500/20 text-amber-400 border border-amber-500/50 hover:bg-amber-500/30 transition-colors"
+                                >
+                                    👑 当选警长
+                                </button>
+                            </>
+                        ) : (
+                            <button
+                                onClick={() => {
+                                    onRegisterSheriff?.(editingPlayer.id);
+                                    closeModal();
+                                }}
+                                className="flex-1 py-2 rounded-lg text-xs font-medium bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 hover:bg-yellow-500/30 transition-colors"
+                            >
+                                🎤 重新上警
+                            </button>
+                        )}
+                    </div>
+                    {editingPlayer.isSheriff && (
+                        <div className="text-center text-xs text-amber-400">
+                            👑 当前警长
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Section 2: Logic Interactions */}
             {showActions ? (
